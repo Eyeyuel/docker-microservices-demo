@@ -1,0 +1,204 @@
+services:
+  # Databases
+  postgres-db:
+    image: postgres:18-alpine
+    restart: always
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=123postgres
+      - POSTGRES_DB=userdb
+    container_name: postgres-db
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    # ports:
+    #   - "5435:5432"
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # RabbitMQ
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    # ports:
+    #   - "5672:5672"
+    #   - "15672:15672"
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # pgAdmin
+  pgadmin:
+    image: dpage/pgadmin4
+    restart: always
+    container_name: pgadmin
+    environment:
+      - PGADMIN_DEFAULT_EMAIL=admin@admin.com
+      - PGADMIN_DEFAULT_PASSWORD=123admin
+    ports:
+      - "5050:80"
+    depends_on:
+      - postgres-db
+    networks:
+      - app-network
+
+  # Microservices
+  user-service:
+    build: ./user-service
+    environment:
+      - DB_HOST=postgres-db
+      - DB_PORT=5432
+      - DB_USER=postgres # match POSTGRES_USER from db
+      - DB_PASSWORD=123postgres
+      - DB_NAME=userdb
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672
+      - USER_QUEUE=user-queue
+    depends_on:
+      postgres-db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    # ports:
+    #   - "3001:3000"
+    volumes:
+      - ./user-service:/app
+      - /app/node_modules
+    networks:
+      - app-network
+  order-service:
+    build: ./order-service
+    environment:
+      - DB_HOST=postgres-db
+      - DB_PORT=5432
+      - DB_USER=postgres
+      - DB_PASSWORD=123postgres
+      - DB_NAME=orderdb
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672
+      - ORDER_QUEUE=order-queue
+    depends_on:
+      postgres-db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    # ports:
+    #   - "3002:3000"
+    volumes:
+      - ./order-service:/app
+      - /app/node_modules
+    networks:
+      - app-network
+
+  product-service:
+    build: ./product-service
+    environment:
+      - DB_HOST=postgres-db
+      - DB_PORT=5432
+      - DB_USER=postgres
+      - DB_PASSWORD=123postgres
+      - DB_NAME=productdb
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672
+      - PRODUCT_QUEUE=product-queue
+    depends_on:
+      postgres-db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    # ports:
+    #   - "3003:3000"
+    volumes:
+      - ./product-service:/app
+      - /app/node_modules
+    networks:
+      - app-network
+
+  api-gateway:
+    build: ./api-gateway
+    environment:
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672
+      - ORDER_QUEUE=order-queue
+      - PRODUCT_QUEUE=product-queue
+      - USER_QUEUE=user-queue
+      - PORT=4000
+    depends_on:
+      - rabbitmq
+      - user-service
+      - order-service
+      - product-service
+    ports:
+      - "4000:4000"
+    volumes:
+      - ./api-gateway:/app
+      - /app/node_modules
+    networks:
+      - app-network
+
+  # web:
+  #   build: ./web
+  #   environment:
+  #     - NEXT_PUBLIC_API_URL=http://localhost:3000
+  #   ports:
+  #     - "3000:3000"
+  #   volumes:
+  #     - ./frontend:/app
+  #     - /app/node_modules
+  #   networks:
+  #     - app-network
+  # web:
+  #   build:
+  #     context: ./web
+  #   ports:
+  #     - 3000:3000
+  #   networks:
+  #     - app-network
+
+  # nextjs-prod-standalone:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile
+  #   image: nextjs-sample:prod
+  #   container_name: nextjs-sample-prod
+  #   ports:
+  #     - "3000:3000"
+
+  nextjs-dev:
+    build:
+      context: ./web
+      dockerfile: Dockerfile.dev
+    image: nextjs-sample:dev
+    container_name: nextjs-sample-dev
+    ports:
+      - "3000:3000"
+    environment:
+      - WATCHPACK_POLLING=true
+    volumes:
+      - ./web:/app # bind mount your code
+      - /app/node_modules # keep container’s node_modules
+    develop:
+      watch:
+        - action: sync
+          path: .
+          target: /app
+          ignore:
+            - node_modules/
+            - .next/
+        - action: rebuild
+          path: package.json
+    networks:
+      - app-network
+
+volumes:
+  postgres-data:
+
+networks:
+  app-network:
+    driver: bridge
