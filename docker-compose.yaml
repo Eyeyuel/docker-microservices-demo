@@ -129,11 +129,11 @@ services:
       - PRODUCT_QUEUE=product-queue
       - USER_QUEUE=user-queue
       - PORT=4000
-    depends_on:
-      - rabbitmq
-      - user-service
-      - order-service
-      - product-service
+    # depends_on:
+    #   - rabbitmq
+    #   - user-service
+    #   - order-service
+    #   - product-service
     ports:
       - "4000:4000"
     volumes:
